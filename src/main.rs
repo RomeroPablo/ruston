@@ -16,6 +16,7 @@ struct GpuState{
     queue   : wgpu::Queue,
     config  : wgpu::SurfaceConfiguration,
     size    : PhysicalSize<u32>,
+    render_pipeline : wgpu::RenderPipeline,
 }
 
 impl GpuState{
@@ -48,6 +49,48 @@ impl GpuState{
         config.alpha_mode = alpha_mode;
         surface.configure(&device, &config);
 
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("triangle shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(
+                                                &wgpu::PipelineLayoutDescriptor{
+            label: Some("render pipeline layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0
+        });
+
+        let render_pipeline = device.create_render_pipeline(
+                                                &wgpu::RenderPipelineDescriptor{
+            label: Some("render pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            primitive: wgpu::PrimitiveState { 
+                topology: wgpu::PrimitiveTopology::default(), 
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState{
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState{
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self{
             instance,
             surface,
@@ -56,6 +99,7 @@ impl GpuState{
             queue,
             config,
             size,
+            render_pipeline,
         }
     }
     fn resize(&mut self, new_size: PhysicalSize<u32>){
@@ -93,8 +137,8 @@ impl GpuState{
             label: Some("render encoder"),
         });
         {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
-                label: Some("clear pass"),
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
+                label: Some("main pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -114,6 +158,8 @@ impl GpuState{
                 timestamp_writes: None,
                 multiview_mask: None,
             });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.draw(0..3, 0..1);
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
