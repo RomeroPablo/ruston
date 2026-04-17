@@ -7,11 +7,23 @@ use dear_imgui_rs as imgui;
 use dear_imgui_wgpu::{GammaMode, WgpuInitInfo, WgpuRenderer};
 use dear_imgui_winit::{HiDpiMode, WinitPlatform};
 use winit::application::ApplicationHandler;
+use winit::event::ElementState;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::EventLoop;
+use winit::keyboard::KeyCode;
+use winit::keyboard::ModifiersState;
+use winit::keyboard::PhysicalKey;
+#[cfg(target_os = "macos")]
+use winit::platform::macos::WindowAttributesExtMacOS;
+#[cfg(target_os = "macos")]
+use winit::platform::macos::WindowExtMacOS;
+#[cfg(not(target_os = "macos"))]
+use winit::window::Fullscreen;
 use winit::window::Window;
+use winit::window::WindowAttributes;
+use winit::window::WindowButtons;
 use winit::window::WindowId;
 
 struct ImguiState {
@@ -230,7 +242,7 @@ impl GpuState {
                             r: 0.00,
                             g: 0.00,
                             b: 0.00,
-                            a: 0.0,
+                            a: 0.20,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -278,6 +290,59 @@ struct App {
     gpu: Option<GpuState>,
     window: Option<Arc<Window>>,
     imgui: Option<ImguiState>,
+    modifiers: ModifiersState,
+}
+
+fn window_attributes() -> WindowAttributes {
+    let attributes = Window::default_attributes()
+        .with_title("ruston")
+        .with_inner_size(PhysicalSize::new(800, 600))
+        .with_transparent(true);
+
+    #[cfg(target_os = "macos")]
+    let attributes = attributes
+        .with_titlebar_transparent(false)
+        .with_fullsize_content_view(true)
+        .with_enabled_buttons(
+            WindowButtons::CLOSE | WindowButtons::MINIMIZE,
+        );
+
+    attributes
+}
+
+fn toggle_fullscreen(window: &Window) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.set_simple_fullscreen(!window.simple_fullscreen());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let fullscreen = if window.fullscreen().is_some() {
+            None
+        } else {
+            Some(Fullscreen::Borderless(None))
+        };
+        window.set_fullscreen(fullscreen);
+    }
+}
+
+fn is_fullscreen_toggle(event: &winit::event::KeyEvent, modifiers: ModifiersState) -> bool {
+    if event.state != ElementState::Pressed || event.repeat {
+        return false;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        modifiers.super_key()
+            && modifiers.control_key()
+            && matches!(event.physical_key, PhysicalKey::Code(KeyCode::KeyF))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        matches!(event.physical_key, PhysicalKey::Code(KeyCode::F11))
+    }
 }
 
 impl ApplicationHandler for App {
@@ -288,12 +353,7 @@ impl ApplicationHandler for App {
 
         let window = Arc::new(
             event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title("ruston")
-                        .with_inner_size(PhysicalSize::new(800, 600))
-                        .with_transparent(false),
-                )
+                .create_window(window_attributes())
                 .unwrap(),
         );
         let gpu = pollster::block_on(GpuState::new(window.clone()));
@@ -333,6 +393,14 @@ impl ApplicationHandler for App {
                 self.gpu = None;
                 self.window = None;
                 event_loop.exit();
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if is_fullscreen_toggle(&event, self.modifiers) {
+                    toggle_fullscreen(window.as_ref());
+                }
             }
             WindowEvent::Resized(new_size) => {
                 if let Some(gpu) = self.gpu.as_mut() {
