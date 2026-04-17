@@ -1,13 +1,13 @@
 use std::sync::Arc;
-use std::time::Instant;
 
-use imgui_wgpu::Renderer;
-use imgui_wgpu::RendererConfig;
-use imgui_winit_support::HiDpiMode;
-use imgui_winit_support::WinitPlatform;
+use dear_imnodes as imnodes;
+use dear_implot as implot;
+use dear_implot3d as implot3d;
+use dear_imgui_rs as imgui;
+use dear_imgui_wgpu::{GammaMode, WgpuInitInfo, WgpuRenderer};
+use dear_imgui_winit::{HiDpiMode, WinitPlatform};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::Event;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::event_loop::EventLoop;
@@ -15,33 +15,49 @@ use winit::window::Window;
 use winit::window::WindowId;
 
 struct ImguiState {
-    imgui: imgui::Context,
+    context: imgui::Context,
     platform: WinitPlatform,
-    renderer: Renderer,
-    last_frame: Instant,
-    show_demo: bool,
+    renderer: WgpuRenderer,
+    plot_ctx: implot::PlotContext,
+    _plot3d_ctx: implot3d::Plot3DContext,
+    _nodes_ctx: imnodes::Context,
+    _nodes_editor_ctx: imnodes::EditorContext,
+    show_imgui_demo: bool,
+    show_implot_demo: bool,
 }
 
 impl ImguiState {
     fn new(window: &Window, gpu: &GpuState) -> Self {
-        let mut imgui = imgui::Context::create();
-        imgui.set_ini_filename(None);
+        let mut context = imgui::Context::create();
+        let flags = context.io().config_flags() | imgui::ConfigFlags::DOCKING_ENABLE;
+        context.io_mut().set_config_flags(flags);
+        let _ = context.set_ini_filename(None::<String>);
 
-        let mut platform = WinitPlatform::new(&mut imgui);
-        platform.attach_window(imgui.io_mut(), window, HiDpiMode::Default);
+        let mut platform = WinitPlatform::new(&mut context);
+        platform.attach_window(window, HiDpiMode::Default, &mut context);
 
-        let renderer_config = RendererConfig {
-            texture_format: gpu.config.format,
-            ..RendererConfig::new()
-        };
-        let renderer = Renderer::new(&mut imgui, &gpu.device, &gpu.queue, renderer_config);
+        let mut renderer = WgpuRenderer::new(
+            WgpuInitInfo::new(gpu.device.clone(), gpu.queue.clone(), gpu.config.format),
+            &mut context,
+        )
+        .expect("failed to create dear imgui wgpu renderer");
+        renderer.set_gamma_mode(GammaMode::Auto);
+
+        let plot_ctx = implot::PlotContext::create(&context);
+        let plot3d_ctx = implot3d::Plot3DContext::create(&context);
+        let nodes_ctx = imnodes::Context::create(&context);
+        let nodes_editor_ctx = nodes_ctx.create_editor_context();
 
         Self {
-            imgui,
+            context,
             platform,
             renderer,
-            last_frame: Instant::now(),
-            show_demo: true,
+            plot_ctx,
+            _plot3d_ctx: plot3d_ctx,
+            _nodes_ctx: nodes_ctx,
+            _nodes_editor_ctx: nodes_editor_ctx,
+            show_imgui_demo: true,
+            show_implot_demo: true,
         }
     }
 }
@@ -167,11 +183,7 @@ impl GpuState {
     fn render(&mut self, window: &Window, imgui: &mut ImguiState, event_loop: &ActiveEventLoop) {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
-            Err(wgpu::SurfaceError::Outdated) => {
-                self.resize(self.size);
-                return;
-            }
-            Err(wgpu::SurfaceError::Lost) => {
+            Err(wgpu::SurfaceError::Outdated) | Err(wgpu::SurfaceError::Lost) => {
                 self.resize(self.size);
                 return;
             }
@@ -183,18 +195,29 @@ impl GpuState {
             Err(wgpu::SurfaceError::Other) => return,
         };
 
-        let now = Instant::now();
-        imgui.imgui.io_mut().update_delta_time(now - imgui.last_frame);
-        imgui.last_frame = now;
-        imgui
-            .platform
-            .prepare_frame(imgui.imgui.io_mut(), window)
-            .expect("failed to prepare imgui frame");
+        imgui.platform.prepare_frame(window, &mut imgui.context);
 
-        let ui = imgui.imgui.frame();
-        ui.show_demo_window(&mut imgui.show_demo);
-        imgui.platform.prepare_render(ui, window);
-        let draw_data = imgui.imgui.render();
+        {
+            let ui = imgui.context.frame();
+            ui.dockspace_over_main_viewport();
+
+            ui.window("Extensions")
+                .size([340.0, 140.0], imgui::Condition::FirstUseEver)
+                .build(|| {
+                    ui.text("dear-imgui-rs migration active");
+                    ui.separator();
+                    ui.text("ImPlot demo: enabled");
+                    ui.text("ImPlot3D crate: linked and ready");
+                    ui.text("ImNodes crate: linked and ready");
+                });
+
+            ui.show_demo_window(&mut imgui.show_imgui_demo);
+            imgui.plot_ctx.set_as_current();
+            implot::show_demo_window(&mut imgui.show_implot_demo);
+            imgui.platform.prepare_render_with_ui(ui, window);
+        }
+
+        let draw_data = imgui.context.render();
 
         let view = frame
             .texture
@@ -251,8 +274,8 @@ impl GpuState {
 
             imgui
                 .renderer
-                .render(draw_data, &self.queue, &self.device, &mut pass)
-                .expect("failed to render imgui");
+                .render_draw_data(draw_data, &mut pass)
+                .expect("failed to render dear imgui");
         }
 
         self.queue.submit(Some(encoder.finish()));
@@ -309,13 +332,9 @@ impl ApplicationHandler for App {
         }
 
         if let Some(imgui) = self.imgui.as_mut() {
-            let wrapped_event: Event<()> = Event::WindowEvent {
-                window_id,
-                event: event.clone(),
-            };
             imgui
                 .platform
-                .handle_event(imgui.imgui.io_mut(), window.as_ref(), &wrapped_event);
+                .handle_window_event(&mut imgui.context, window.as_ref(), &event);
         }
 
         match event {

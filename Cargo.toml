@@ -7,6 +7,9 @@ edition = "2024"
 winit = "0.30.0"
 wgpu = "28.0.0"
 pollster = "0.4.0"
-imgui = "0.12.0"
-imgui-winit-support = "0.13"
-imgui-wgpu = "0.27"
+dear-imgui-rs = "0.10.4"
+dear-imgui-winit = "0.10.4"
+dear-imgui-wgpu = { version = "0.10.4", default-features = false, features = ["wgpu-28"] }
+dear-implot = { version = "0.10.4", features = ["demo"] }
+dear-implot3d = "0.10.4"
+dear-imnodes = "0.10.4"
