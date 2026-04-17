@@ -201,16 +201,6 @@ impl GpuState {
             let ui = imgui.context.frame();
             ui.dockspace_over_main_viewport();
 
-            ui.window("Extensions")
-                .size([340.0, 140.0], imgui::Condition::FirstUseEver)
-                .build(|| {
-                    ui.text("dear-imgui-rs migration active");
-                    ui.separator();
-                    ui.text("ImPlot demo: enabled");
-                    ui.text("ImPlot3D crate: linked and ready");
-                    ui.text("ImNodes crate: linked and ready");
-                });
-
             ui.show_demo_window(&mut imgui.show_imgui_demo);
             imgui.plot_ctx.set_as_current();
             implot::show_demo_window(&mut imgui.show_implot_demo);
